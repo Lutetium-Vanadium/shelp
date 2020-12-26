@@ -1,14 +1,14 @@
 [package]
 name = "shelp"
 description="A interactive shell, helper library"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Lutetium-Vanadium"]
 edition = "2018"
 license="MIT"
-homepage="https://github.com/Lutetium-Vanadium/shelp"
+homepage="https://github.com/Lutetium-Vanadium/shelp#readme"
 repository="https://github.com/Lutetium-Vanadium/shelp"
 readme="README.md"
-documentation="https://github.com/Lutetium-Vanadium/shelp"
+documentation="https://docs.rs/shelp"
 
 [dependencies]
 crossterm = "0.18.2"

@@ -34,6 +34,11 @@ use std::path::PathBuf;
 /// - `capacity`
 ///   The maximum amount of commands stored in the history. Default capacity is 64. If there are
 ///   already 64 commands in the history, the oldest one will be forgotten.
+/// - `exit_keyword`
+///   The keyword to exit the repl, it exits the process, so should not be used if any cleanup is a
+///   required before closing repl. See [`set_exit_keyword`](Repl::set_exit_keyword)
+/// - `clear_keyword`
+///   Clears the screen. See [`set_clear_keyword`](Repl::set_exit_keyword)
 pub struct Repl<L: LangInterface = DefaultLangInterface> {
     /// The history of commands run.
     history: History,
@@ -54,6 +59,10 @@ pub struct Repl<L: LangInterface = DefaultLangInterface> {
     /// The number of characters in the continued leader, it is stored here since getting number of
     /// characters is an `O(n)` operation for a utf-8 encoded string
     continued_leader_len: usize,
+    /// The keyword which corresponds to the exit command (default is 'exit')
+    exit_keyword: &'static str,
+    /// The keyword which corresponds to the clear command (default is 'clear')
+    clear_keyword: &'static str,
     _lang_interface: PhantomData<L>,
 }
 
@@ -82,6 +91,8 @@ impl Repl<DefaultLangInterface> {
             leader_len: leader.chars().count(),
             continued_leader,
             continued_leader_len: leader.chars().count(),
+            exit_keyword: "exit",
+            clear_keyword: "clear",
             _lang_interface: PhantomData,
         };
 
@@ -118,6 +129,8 @@ impl<L: LangInterface> Repl<L> {
             leader_len: leader.chars().count(),
             continued_leader,
             continued_leader_len: leader.chars().count(),
+            exit_keyword: "exit",
+            clear_keyword: "clear",
             _lang_interface: PhantomData,
         };
 
@@ -126,6 +139,16 @@ impl<L: LangInterface> Repl<L> {
         }
 
         repl
+    }
+
+    /// Sets the exit keyword. If you don't want any exit keyword, set it to an empty string
+    pub fn set_exit_keyword(&mut self, exit_keyword: &'static str) {
+        self.exit_keyword = exit_keyword
+    }
+
+    /// Sets the clear keyword. If you don't want any clear keyword, set it to an empty string
+    pub fn set_clear_keyword(&mut self, clear_keyword: &'static str) {
+        self.clear_keyword = clear_keyword
     }
 
     /// Gives current command based on the cursor
@@ -413,24 +436,33 @@ impl<L: LangInterface> Repl<L> {
                     }
 
                     event::KeyCode::Enter => {
+                        if lines[0].trim().len() == 0 {
+                            execute!(
+                                stdout,
+                                cursor::MoveToNextLine(1),
+                                style::SetForegroundColor(colour),
+                                style::Print(self.leader)
+                            )?;
+                            // Empty line
+                            continue;
+                        }
+
                         let is_command = if !c.use_history && lines.len() == 1 {
-                            match &lines[0] as &str {
-                                "exit" => {
-                                    self.exit();
-                                }
-                                "clear" => {
-                                    c.charno = 0;
-                                    lines[0].clear();
+                            if &lines[0] == self.exit_keyword {
+                                self.exit();
+                            } else if &lines[0] == self.clear_keyword {
+                                c.charno = 0;
+                                lines[0].clear();
 
-                                    queue!(
-                                        stdout,
-                                        terminal::Clear(terminal::ClearType::All),
-                                        cursor::MoveTo(0, 0),
-                                    )?;
+                                queue!(
+                                    stdout,
+                                    terminal::Clear(terminal::ClearType::All),
+                                    cursor::MoveTo(0, 0),
+                                )?;
 
-                                    true
-                                }
-                                _ => false,
+                                true
+                            } else {
+                                false
                             }
                         } else {
                             false
@@ -446,15 +478,18 @@ impl<L: LangInterface> Repl<L> {
                                 style::ResetColor,
                             )?;
 
+                            // Command executed, no need to do any other checks
                             continue;
                         }
 
                         if c.use_history && (c.lineno + 1) == self.history.cur().unwrap().len() {
+                            // On the last line, break out of loop to return code for execution
                             break;
                         }
                         let indent = L::get_indent(&self.cur(&c, &lines)[0..(c.lineno + 1)]);
 
                         if !c.use_history && (c.lineno + 1) == lines.len() && indent == 0 {
+                            // On the last line, break out of loop to return code for execution
                             break;
                         } else {
                             if c.use_history {
@@ -463,8 +498,8 @@ impl<L: LangInterface> Repl<L> {
                             }
 
                             c.lineno += 1;
-                            c.charno = (indent * 4) as usize;
-                            lines.insert(c.lineno, " ".repeat(c.charno));
+                            c.charno = indent;
+                            lines.insert(c.lineno, " ".repeat(indent));
                             execute!(stdout, style::Print("\n"))?;
                             self.print_lines(&mut stdout, &mut c, &lines, colour)?;
                             ""
@@ -501,12 +536,10 @@ impl<L: LangInterface> Repl<L> {
 
         let src = self.cur(&c, &lines).join("\n");
 
-        if src.trim().len() > 0 {
-            if c.use_history {
-                self.history.push(self.history.cur().unwrap().clone());
-            } else {
-                self.history.push(lines);
-            }
+        if c.use_history {
+            self.history.push(self.history.cur().unwrap().clone());
+        } else {
+            self.history.push(lines);
         }
 
         Ok(src)
