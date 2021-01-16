@@ -10,7 +10,7 @@ pub trait LangInterface {
     fn print_line(stdout: &mut io::Stdout, line: &str) -> crate::Result<()> {
         stdout
             .write_all(line.as_bytes())
-            .map_err(|e| crossterm::ErrorKind::IoError(e))
+            .map_err(crossterm::ErrorKind::IoError)
     }
 
     /// Given the lines up to the place a new line is being added, this function should give the

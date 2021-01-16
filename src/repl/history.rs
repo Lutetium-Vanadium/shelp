@@ -17,11 +17,6 @@ pub struct History {
     /// So it must be efficient to push commands to the front of the buffer without recopying
     /// everything.
     buffer: VecDeque<Vec<String>>,
-    /// The max capacity of history.
-    ///
-    /// A buffer of this capacity is allocated so there are no resizes. If the buffer is at max
-    /// capacity and a command is pushed, the oldest command in the buffer is popped.
-    pub capacity: usize,
     /// An index for the current position in history for ease of use.
     ///
     /// The `next()`, `prev()` and `cur()` functions operate on this index.
@@ -38,14 +33,13 @@ impl History {
     pub fn with_capacity(capacity: usize, path: Option<PathBuf>) -> Self {
         Self {
             buffer: VecDeque::with_capacity(capacity + 1),
-            capacity,
             iter_i: Cell::new(-1),
             path,
         }
     }
 
     fn at_capacity(&self) -> bool {
-        self.buffer.len() == self.capacity
+        self.buffer.len() == self.buffer.capacity()
     }
 
     pub fn push(&mut self, lines: Vec<String>) {

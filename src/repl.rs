@@ -436,7 +436,7 @@ impl<L: LangInterface> Repl<L> {
                     }
 
                     event::KeyCode::Enter => {
-                        if lines[0].trim().len() == 0 {
+                        if self.cur(&c, &lines[..])[0].trim().is_empty() {
                             execute!(
                                 stdout,
                                 cursor::MoveToNextLine(1),
@@ -447,39 +447,25 @@ impl<L: LangInterface> Repl<L> {
                             continue;
                         }
 
-                        let is_command = if !c.use_history && lines.len() == 1 {
-                            if &lines[0] == self.exit_keyword {
+                        if !c.use_history && lines.len() == 1 {
+                            if lines[0] == self.exit_keyword {
                                 self.exit();
-                            } else if &lines[0] == self.clear_keyword {
+                            } else if lines[0] == self.clear_keyword {
                                 c.charno = 0;
                                 lines[0].clear();
 
-                                queue!(
+                                execute!(
                                     stdout,
                                     terminal::Clear(terminal::ClearType::All),
                                     cursor::MoveTo(0, 0),
+                                    style::SetForegroundColor(colour),
+                                    style::Print(self.leader),
+                                    style::ResetColor,
                                 )?;
 
-                                true
-                            } else {
-                                false
+                                // Command executed, no need to do any other checks
+                                continue;
                             }
-                        } else {
-                            false
-                        };
-
-                        if is_command {
-                            c.charno = 0;
-                            lines[0].clear();
-                            execute!(
-                                stdout,
-                                style::SetForegroundColor(colour),
-                                style::Print(self.leader),
-                                style::ResetColor,
-                            )?;
-
-                            // Command executed, no need to do any other checks
-                            continue;
                         }
 
                         if c.use_history && (c.lineno + 1) == self.history.cur().unwrap().len() {
