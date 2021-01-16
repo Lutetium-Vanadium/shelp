@@ -176,6 +176,8 @@ impl<L: LangInterface> Repl<L> {
             lines[i].clear();
             lines[i] += string;
         }
+
+        self.history.reset_iter();
     }
 
     fn pre_exit(&self) {
@@ -261,13 +263,13 @@ impl<L: LangInterface> Repl<L> {
         loop {
             let s = match event::read()? {
                 event::Event::Key(e) => match e.code {
-                    event::KeyCode::Char(chr)
-                        if e.modifiers.contains(event::KeyModifiers::CONTROL) && chr == 'c' =>
+                    event::KeyCode::Char('c')
+                        if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
                     {
                         self.exit()
                     }
-                    event::KeyCode::Char(chr)
-                        if e.modifiers.contains(event::KeyModifiers::CONTROL) && chr == 'l' =>
+                    event::KeyCode::Char('l')
+                        if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
                     {
                         let lineno = c.lineno;
                         c.lineno = 0;
