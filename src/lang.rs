@@ -35,8 +35,8 @@ pub trait LangInterface {
     /// if true { █ // <------------- PRESSED ENTER HERE
     /// }
     /// ```
-    /// Here the first two lines will be give: `['let a = 213;', 'if true {']`, and the expected
-    /// indent would be `4` such that the code would become:
+    /// Here the lines would be give: `['if true {', '}']`, and the expected indent would be `4`
+    /// such that the code would become:
     /// ```ignore
     /// if true {
     ///     █ // CURSOR HERE

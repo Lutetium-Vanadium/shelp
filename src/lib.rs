@@ -47,7 +47,7 @@
 //! impl LangInterface for MyLangInterface {
 //!     fn print_line(_: &mut io::Stdout, lines: &[String], index: usize) -> Result<()> {
 //!         // NOTE this is simple linting and has no multi-line context. For more information on
-//!         // the reason all lines are given, see [`LangInterface::print_line`]
+//!         // the reason all lines are given, see LangInterface::print_line
 //!         for i in lines[index].chars() {
 //!             if i.is_numeric() {
 //!                 print!("{}", i.magenta());
