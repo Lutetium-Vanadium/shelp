@@ -46,8 +46,10 @@ struct MyLangInterface;
 // We want to override the linting so numbers are coloured, but we don't have a specific way of
 // getting the indentation, so we do not override that.
 impl LangInterface for MyLangInterface {
-    fn print_line(_: &mut io::Stdout, line: &str) -> Result<()> {
-        for i in line.chars() {
+    fn print_line(_: &mut io::Stdout, lines: &[String], index: usize) -> Result<()> {
+        // NOTE this is simple linting and has no multi-line context. For more information on
+        // the reason all lines are given, see [`LangInterface::print_line`]
+        for i in lines[index].chars() {
             if i.is_numeric() {
                 print!("{}", i.magenta());
             } else {

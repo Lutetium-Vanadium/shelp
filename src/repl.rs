@@ -210,7 +210,7 @@ impl<L: LangInterface> Repl<L> {
         )?;
         let mut is_first = true;
 
-        for line in lines {
+        for index in 0..lines.len() {
             let leader = if is_first {
                 is_first = false;
                 self.leader
@@ -224,7 +224,7 @@ impl<L: LangInterface> Repl<L> {
                 style::SetForegroundColor(colour),
                 style::Print(leader),
             )?;
-            L::print_line(stdout, line)?;
+            L::print_line(stdout, lines, index)?;
             queue!(stdout, style::Print("\n"))?;
         }
 
@@ -261,8 +261,8 @@ impl<L: LangInterface> Repl<L> {
         )?;
 
         loop {
-            let s = match event::read()? {
-                event::Event::Key(e) => match e.code {
+            if let event::Event::Key(e) = event::read()? {
+                match e.code {
                     event::KeyCode::Char('c')
                         if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
                     {
@@ -291,8 +291,6 @@ impl<L: LangInterface> Repl<L> {
                             stdout,
                             cursor::MoveToColumn((self.continued_leader_len + c.charno) as u16),
                         )?;
-
-                        self.cur_str(&c, &lines)
                     }
                     event::KeyCode::Char(chr) => {
                         if c.use_history {
@@ -304,8 +302,6 @@ impl<L: LangInterface> Repl<L> {
 
                         lines[c.lineno].insert(byte_i, chr);
                         c.charno += 1;
-
-                        &lines[c.lineno]
                     }
                     event::KeyCode::Tab => {
                         if c.use_history {
@@ -315,31 +311,21 @@ impl<L: LangInterface> Repl<L> {
 
                         lines[c.lineno].insert_str(c.charno, "    ");
                         c.charno += 4;
-
-                        &lines[c.lineno]
                     }
 
                     event::KeyCode::Home => {
                         c.charno = 0;
-                        self.cur_str(&c, &lines)
                     }
                     event::KeyCode::End => {
-                        let s = self.cur_str(&c, &lines);
-                        c.charno = s.chars().count();
-                        s
+                        c.charno = self.cur_str(&c, &lines).chars().count();
                     }
                     event::KeyCode::Left if c.charno > 0 => {
                         c.charno -= 1;
-                        self.cur_str(&c, &lines)
                     }
                     event::KeyCode::Right => {
-                        let s = self.cur_str(&c, &lines);
-
-                        if c.charno < s.chars().count() {
+                        if c.charno < self.cur_str(&c, &lines).chars().count() {
                             c.charno += 1;
                         };
-
-                        s
                     }
 
                     event::KeyCode::PageUp => history_up!(retain self, stdout, c, lines, colour),
@@ -351,9 +337,7 @@ impl<L: LangInterface> Repl<L> {
                     event::KeyCode::Up => {
                         c.lineno -= 1;
                         queue!(stdout, cursor::MoveUp(1))?;
-                        let s = self.cur_str(&c, &lines);
-                        c.charno = min(s.chars().count(), c.charno);
-                        s
+                        c.charno = min(self.cur_str(&c, &lines).chars().count(), c.charno);
                     }
 
                     event::KeyCode::PageDown => {
@@ -368,16 +352,12 @@ impl<L: LangInterface> Repl<L> {
                         history_down!(self, stdout, c, lines, colour)
                     }
                     // When in the end of editable lines, nothing should be done
-                    event::KeyCode::Down if !c.use_history && (c.lineno + 1) == lines.len() => {
-                        &lines[c.lineno]
-                    }
+                    event::KeyCode::Down if !c.use_history && (c.lineno + 1) == lines.len() => {}
                     // Somewhere in the block, go to next line
                     event::KeyCode::Down => {
                         c.lineno += 1;
                         queue!(stdout, cursor::MoveDown(1))?;
-                        let s = self.cur_str(&c, &lines);
-                        c.charno = min(s.chars().count(), c.charno);
-                        s
+                        c.charno = min(self.cur_str(&c, &lines).chars().count(), c.charno);
                     }
 
                     // Regular case, just need to delete a character
@@ -390,7 +370,6 @@ impl<L: LangInterface> Repl<L> {
                         c.charno -= 1;
                         let byte_i = get_byte_i(&lines[c.lineno], c.charno);
                         lines[c.lineno].remove(byte_i);
-                        &lines[c.lineno]
                     }
                     // It is the last character, and it is not the last line
                     event::KeyCode::Backspace if c.lineno > 0 => {
@@ -406,8 +385,6 @@ impl<L: LangInterface> Repl<L> {
 
                         execute!(stdout, cursor::MoveUp(1))?;
                         self.print_lines(&mut stdout, &mut c, &lines, colour)?;
-
-                        &lines[c.lineno]
                     }
 
                     // Regular delete, just need to delete one character
@@ -421,7 +398,6 @@ impl<L: LangInterface> Repl<L> {
 
                         let byte_i = get_byte_i(&lines[c.lineno], c.charno);
                         lines[c.lineno].remove(byte_i);
-                        &lines[c.lineno]
                     }
                     event::KeyCode::Delete if (c.lineno + 1) < self.cur(&c, &lines).len() => {
                         if c.use_history {
@@ -433,8 +409,6 @@ impl<L: LangInterface> Repl<L> {
                         lines[c.lineno] += &line;
 
                         self.print_lines(&mut stdout, &mut c, &lines, colour)?;
-
-                        &lines[c.lineno]
                     }
 
                     event::KeyCode::Enter => {
@@ -490,12 +464,10 @@ impl<L: LangInterface> Repl<L> {
                             lines.insert(c.lineno, " ".repeat(indent));
                             execute!(stdout, style::Print("\n"))?;
                             self.print_lines(&mut stdout, &mut c, &lines, colour)?;
-                            ""
                         }
                     }
-                    _ => self.cur_str(&c, &lines),
-                },
-                _ => self.cur_str(&c, &lines),
+                    _ => {}
+                }
             };
 
             queue!(
@@ -512,7 +484,7 @@ impl<L: LangInterface> Repl<L> {
             };
 
             queue!(stdout, style::Print(leader))?;
-            L::print_line(&mut stdout, s)?;
+            L::print_line(&mut stdout, self.cur(&c, &lines[..]), c.lineno)?;
             execute!(
                 stdout,
                 cursor::MoveToColumn((leader_len + c.charno + 1) as u16)

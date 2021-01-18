@@ -22,13 +22,11 @@ macro_rules! history_up {
             },
         };
 
-        let s = &lines[$c.lineno];
-        let s_len = s.chars().count();
+        let s_len = lines[$c.lineno].chars().count();
 
         if $c.charno == 0 || $c.charno > s_len {
             $c.charno = s_len;
         }
-        s
     }};
 
     (retain $self:ident, $stdout:ident, $c:ident, $lines:ident, $colour:ident) => {{
@@ -43,7 +41,6 @@ macro_rules! history_up {
             queue!($stdout, cursor::MoveUp(($c.lineno - lineno) as u16))?;
             $c.lineno = lineno;
         };
-        $self.cur_str(&$c, &$lines)
     }};
 }
 
@@ -65,13 +62,11 @@ macro_rules! history_down {
         $c.lineno = 0;
         $self.print_lines(&mut $stdout, &mut $c, lines, $colour)?;
 
-        let s = &lines[$c.lineno];
-        let s_len = s.chars().count();
+        let s_len = lines[$c.lineno].chars().count();
 
         if $c.charno == 0 || $c.charno > s_len {
-            $c.charno = s.chars().count();
+            $c.charno = s_len;
         }
-        s
     }};
 
     (retain $self:ident, $stdout:ident, $c:ident, $lines:ident, $colour:ident) => {{
@@ -82,6 +77,5 @@ macro_rules! history_down {
             queue!($stdout, cursor::MoveDown(lineno as u16))?;
             $c.lineno = lineno;
         };
-        $self.cur_str(&$c, &$lines)
     }};
 }
