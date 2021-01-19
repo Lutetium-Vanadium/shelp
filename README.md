@@ -1,8 +1,9 @@
 # Shelp
 
-`shelp`(`sh help`) is a library to create a functional and good looking REPL without having to worry about
-the generic setup and interacting and the terminal. It provides a configurable interface,
-allowing you to only need to deal with the language specific parts of the REPL.
+`shelp`(`sh help`) is a library to create a functional and good looking
+REPL without having to worry about the generic setup. It provides a
+configurable interface, allowing you to only need to deal with the
+language specific parts of the REPL.
 
 There are special 2 commands handled by the repl:
 - `clear` - clears the screen
@@ -33,8 +34,8 @@ for command in repl {
 }
 ```
 Here no `LangInterface` is specified, so the default is used.
-A `LangInterface` can be specified by implementing the trait and passing it as the generic
-type argument.
+A `LangInterface` can be specified by implementing the trait and passing
+it as the generic type argument.
 
 ```rust
 use std::io::{self, prelude::*};

@@ -1,6 +1,6 @@
 //! `shelp` is a library to create a functional and good looking REPL without having to worry about
-//! the generic setup and interacting and the terminal. It provides a configurable interface,
-//! allowing you to only need to deal with the language specific parts of the REPL.
+//! the generic setup. It provides a configurable interface, allowing you to only need to deal with
+//! the language specific parts of the REPL.
 //!
 //! There are special 2 commands handled by the repl:
 //! - `clear` - clears the screen
