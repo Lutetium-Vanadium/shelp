@@ -80,5 +80,4 @@ mod repl;
 
 pub use crossterm::{style::Color, Result};
 pub use lang::LangInterface;
-pub use repl::iter::ReplIter;
 pub use repl::Repl;

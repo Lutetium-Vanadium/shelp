@@ -1,10 +1,10 @@
 mod history;
-pub(crate) mod iter;
 
 use history::History;
 
 use crate::lang::{DefaultLangInterface, LangInterface};
-use crossterm::{cursor, event, execute, queue, style, terminal};
+use crossterm::{cursor, event, event::EventStream, execute, queue, style, terminal};
+use futures::StreamExt;
 use std::cmp::min;
 use std::io::prelude::*;
 use std::marker::PhantomData;
@@ -64,6 +64,8 @@ pub struct Repl<L: LangInterface = DefaultLangInterface> {
     /// The keyword which corresponds to the clear command (default is 'clear')
     clear_keyword: &'static str,
     _lang_interface: PhantomData<L>,
+    /// The async event stream for the REPL.
+    event_stream: EventStream,
 }
 
 impl Repl<DefaultLangInterface> {
@@ -94,6 +96,7 @@ impl Repl<DefaultLangInterface> {
             exit_keyword: "exit",
             clear_keyword: "clear",
             _lang_interface: PhantomData,
+            event_stream: EventStream::new(),
         };
 
         if should_persist {
@@ -132,6 +135,7 @@ impl<L: LangInterface> Repl<L> {
             exit_keyword: "exit",
             clear_keyword: "clear",
             _lang_interface: PhantomData,
+            event_stream: EventStream::new(),
         };
 
         if should_persist {
@@ -244,7 +248,7 @@ impl<L: LangInterface> Repl<L> {
     }
 
     /// The main function, gives the next command
-    pub fn next(&mut self, colour: style::Color) -> crate::Result<String> {
+    pub async fn next(&mut self, colour: style::Color) -> crate::Result<String> {
         let mut stdout = std::io::stdout();
         let mut lines = Vec::new();
         lines.push(String::new());
@@ -261,214 +265,229 @@ impl<L: LangInterface> Repl<L> {
         )?;
 
         loop {
-            if let event::Event::Key(e) = event::read()? {
-                match e.code {
-                    event::KeyCode::Char('c')
-                        if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
-                    {
-                        self.exit()
-                    }
-                    event::KeyCode::Char('l')
-                        if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
-                    {
-                        let lineno = c.lineno;
-                        c.lineno = 0;
-
-                        queue!(
-                            stdout,
-                            terminal::Clear(terminal::ClearType::All),
-                            cursor::MoveTo(0, 0)
-                        )?;
-                        let lines = self.cur(&c, &lines);
-                        self.print_lines(&mut stdout, &mut c, lines, colour)?;
-                        c.lineno = lineno;
-                        c.charno = min(c.charno, lines[c.lineno].chars().count());
-
-                        if c.lineno > 0 {
-                            queue!(stdout, cursor::MoveDown(lineno as u16))?;
+            match self.event_stream.next().await {
+                Some(Ok(event::Event::Key(e))) => {
+                    match e.code {
+                        event::KeyCode::Char('c')
+                            if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                        {
+                            self.exit()
                         }
-                        queue!(
-                            stdout,
-                            cursor::MoveToColumn((self.continued_leader_len + c.charno) as u16),
-                        )?;
-                    }
-                    event::KeyCode::Char(chr) => {
-                        if c.use_history {
-                            self.replace_with_history(&mut lines);
-                            c.use_history = false;
-                        };
+                        event::KeyCode::Char('l')
+                            if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                        {
+                            let lineno = c.lineno;
+                            c.lineno = 0;
 
-                        let byte_i = get_byte_i(&lines[c.lineno], c.charno);
-
-                        lines[c.lineno].insert(byte_i, chr);
-                        c.charno += 1;
-                    }
-                    event::KeyCode::Tab => {
-                        if c.use_history {
-                            self.replace_with_history(&mut lines);
-                            c.use_history = false;
-                        };
-
-                        lines[c.lineno].insert_str(c.charno, "    ");
-                        c.charno += 4;
-                    }
-
-                    event::KeyCode::Home => {
-                        c.charno = 0;
-                    }
-                    event::KeyCode::End => {
-                        c.charno = self.cur_str(&c, &lines).chars().count();
-                    }
-                    event::KeyCode::Left if c.charno > 0 => {
-                        c.charno -= 1;
-                    }
-                    event::KeyCode::Right => {
-                        if c.charno < self.cur_str(&c, &lines).chars().count() {
-                            c.charno += 1;
-                        };
-                    }
-
-                    event::KeyCode::PageUp => history_up!(retain self, stdout, c, lines, colour),
-                    // At the top of the current block, go to previous history block
-                    event::KeyCode::Up if c.lineno == 0 => {
-                        history_up!(self, stdout, c, lines, colour)
-                    }
-                    // In the middle of a block, go up one line
-                    event::KeyCode::Up => {
-                        c.lineno -= 1;
-                        queue!(stdout, cursor::MoveUp(1))?;
-                        c.charno = min(self.cur_str(&c, &lines).chars().count(), c.charno);
-                    }
-
-                    event::KeyCode::PageDown => {
-                        history_down!(retain self, stdout, c, lines, colour)
-                    }
-                    // At the bottom of the block, and in history. This means that there are more
-                    // blocks down, either further down the history or when history is over, the
-                    // editable lines itself
-                    event::KeyCode::Down
-                        if c.use_history && (c.lineno + 1) == self.history.cur().unwrap().len() =>
-                    {
-                        history_down!(self, stdout, c, lines, colour)
-                    }
-                    // When in the end of editable lines, nothing should be done
-                    event::KeyCode::Down if !c.use_history && (c.lineno + 1) == lines.len() => {}
-                    // Somewhere in the block, go to next line
-                    event::KeyCode::Down => {
-                        c.lineno += 1;
-                        queue!(stdout, cursor::MoveDown(1))?;
-                        c.charno = min(self.cur_str(&c, &lines).chars().count(), c.charno);
-                    }
-
-                    // Regular case, just need to delete a character
-                    event::KeyCode::Backspace if c.charno > 0 => {
-                        if c.use_history {
-                            self.replace_with_history(&mut lines);
-                            c.use_history = false;
-                        };
-
-                        c.charno -= 1;
-                        let byte_i = get_byte_i(&lines[c.lineno], c.charno);
-                        lines[c.lineno].remove(byte_i);
-                    }
-                    // It is the last character, and it is not the last line
-                    event::KeyCode::Backspace if c.lineno > 0 => {
-                        if c.use_history {
-                            self.replace_with_history(&mut lines);
-                            c.use_history = false;
-                        };
-
-                        c.lineno -= 1;
-                        c.charno = lines[c.lineno].chars().count();
-                        let line = lines.remove(c.lineno + 1);
-                        lines[c.lineno] += &line;
-
-                        execute!(stdout, cursor::MoveUp(1))?;
-                        self.print_lines(&mut stdout, &mut c, &lines, colour)?;
-                    }
-
-                    // Regular delete, just need to delete one character
-                    event::KeyCode::Delete
-                        if c.charno < self.cur_str(&c, &lines).chars().count() =>
-                    {
-                        if c.use_history {
-                            self.replace_with_history(&mut lines);
-                            c.use_history = false;
-                        };
-
-                        let byte_i = get_byte_i(&lines[c.lineno], c.charno);
-                        lines[c.lineno].remove(byte_i);
-                    }
-                    event::KeyCode::Delete if (c.lineno + 1) < self.cur(&c, &lines).len() => {
-                        if c.use_history {
-                            self.replace_with_history(&mut lines);
-                            c.use_history = false;
-                        };
-
-                        let line = lines.remove(c.lineno + 1);
-                        lines[c.lineno] += &line;
-
-                        self.print_lines(&mut stdout, &mut c, &lines, colour)?;
-                    }
-
-                    event::KeyCode::Enter => {
-                        if self.cur(&c, &lines[..])[0].trim().is_empty() {
-                            execute!(
+                            queue!(
                                 stdout,
-                                cursor::MoveToNextLine(1),
-                                style::SetForegroundColor(colour),
-                                style::Print(self.leader)
+                                terminal::Clear(terminal::ClearType::All),
+                                cursor::MoveTo(0, 0)
                             )?;
-                            // Empty line
-                            continue;
-                        }
+                            let lines = self.cur(&c, &lines);
+                            self.print_lines(&mut stdout, &mut c, lines, colour)?;
+                            c.lineno = lineno;
+                            c.charno = min(c.charno, lines[c.lineno].chars().count());
 
-                        if !c.use_history && lines.len() == 1 {
-                            if lines[0] == self.exit_keyword {
-                                self.exit();
-                            } else if lines[0] == self.clear_keyword {
-                                c.charno = 0;
-                                lines[0].clear();
-
-                                execute!(
-                                    stdout,
-                                    terminal::Clear(terminal::ClearType::All),
-                                    cursor::MoveTo(0, 0),
-                                    style::SetForegroundColor(colour),
-                                    style::Print(self.leader),
-                                    style::ResetColor,
-                                )?;
-
-                                // Command executed, no need to do any other checks
-                                continue;
+                            if c.lineno > 0 {
+                                queue!(stdout, cursor::MoveDown(lineno as u16))?;
                             }
+                            queue!(
+                                stdout,
+                                cursor::MoveToColumn((self.continued_leader_len + c.charno) as u16),
+                            )?;
                         }
-
-                        if c.use_history && (c.lineno + 1) == self.history.cur().unwrap().len() {
-                            // On the last line, break out of loop to return code for execution
-                            break;
-                        }
-                        let indent = L::get_indent(&self.cur(&c, &lines)[0..(c.lineno + 1)]);
-
-                        if !c.use_history && (c.lineno + 1) == lines.len() && indent == 0 {
-                            // On the last line, break out of loop to return code for execution
-                            break;
-                        } else {
+                        event::KeyCode::Char(chr) => {
                             if c.use_history {
                                 self.replace_with_history(&mut lines);
                                 c.use_history = false;
-                            }
+                            };
 
+                            let byte_i = get_byte_i(&lines[c.lineno], c.charno);
+
+                            lines[c.lineno].insert(byte_i, chr);
+                            c.charno += 1;
+                        }
+                        event::KeyCode::Tab => {
+                            if c.use_history {
+                                self.replace_with_history(&mut lines);
+                                c.use_history = false;
+                            };
+
+                            lines[c.lineno].insert_str(c.charno, "    ");
+                            c.charno += 4;
+                        }
+
+                        event::KeyCode::Home => {
+                            c.charno = 0;
+                        }
+                        event::KeyCode::End => {
+                            c.charno = self.cur_str(&c, &lines).chars().count();
+                        }
+                        event::KeyCode::Left if c.charno > 0 => {
+                            c.charno -= 1;
+                        }
+                        event::KeyCode::Right => {
+                            if c.charno < self.cur_str(&c, &lines).chars().count() {
+                                c.charno += 1;
+                            };
+                        }
+
+                        event::KeyCode::PageUp => {
+                            history_up!(retain self, stdout, c, lines, colour)
+                        }
+                        // At the top of the current block, go to previous history block
+                        event::KeyCode::Up if c.lineno == 0 => {
+                            history_up!(self, stdout, c, lines, colour)
+                        }
+                        // In the middle of a block, go up one line
+                        event::KeyCode::Up => {
+                            c.lineno -= 1;
+                            queue!(stdout, cursor::MoveUp(1))?;
+                            c.charno = min(self.cur_str(&c, &lines).chars().count(), c.charno);
+                        }
+
+                        event::KeyCode::PageDown => {
+                            history_down!(retain self, stdout, c, lines, colour)
+                        }
+                        // At the bottom of the block, and in history. This means that there are more
+                        // blocks down, either further down the history or when history is over, the
+                        // editable lines itself
+                        event::KeyCode::Down
+                            if c.use_history
+                                && (c.lineno + 1) == self.history.cur().unwrap().len() =>
+                        {
+                            history_down!(self, stdout, c, lines, colour)
+                        }
+                        // When in the end of editable lines, nothing should be done
+                        event::KeyCode::Down if !c.use_history && (c.lineno + 1) == lines.len() => {
+                        }
+                        // Somewhere in the block, go to next line
+                        event::KeyCode::Down => {
                             c.lineno += 1;
-                            c.charno = indent;
-                            lines.insert(c.lineno, " ".repeat(indent));
-                            execute!(stdout, style::Print("\n"))?;
+                            queue!(stdout, cursor::MoveDown(1))?;
+                            c.charno = min(self.cur_str(&c, &lines).chars().count(), c.charno);
+                        }
+
+                        // Regular case, just need to delete a character
+                        event::KeyCode::Backspace if c.charno > 0 => {
+                            if c.use_history {
+                                self.replace_with_history(&mut lines);
+                                c.use_history = false;
+                            };
+
+                            c.charno -= 1;
+                            let byte_i = get_byte_i(&lines[c.lineno], c.charno);
+                            lines[c.lineno].remove(byte_i);
+                        }
+                        // It is the last character, and it is not the last line
+                        event::KeyCode::Backspace if c.lineno > 0 => {
+                            if c.use_history {
+                                self.replace_with_history(&mut lines);
+                                c.use_history = false;
+                            };
+
+                            c.lineno -= 1;
+                            c.charno = lines[c.lineno].chars().count();
+                            let line = lines.remove(c.lineno + 1);
+                            lines[c.lineno] += &line;
+
+                            execute!(stdout, cursor::MoveUp(1))?;
                             self.print_lines(&mut stdout, &mut c, &lines, colour)?;
                         }
+
+                        // Regular delete, just need to delete one character
+                        event::KeyCode::Delete
+                            if c.charno < self.cur_str(&c, &lines).chars().count() =>
+                        {
+                            if c.use_history {
+                                self.replace_with_history(&mut lines);
+                                c.use_history = false;
+                            };
+
+                            let byte_i = get_byte_i(&lines[c.lineno], c.charno);
+                            lines[c.lineno].remove(byte_i);
+                        }
+                        event::KeyCode::Delete if (c.lineno + 1) < self.cur(&c, &lines).len() => {
+                            if c.use_history {
+                                self.replace_with_history(&mut lines);
+                                c.use_history = false;
+                            };
+
+                            let line = lines.remove(c.lineno + 1);
+                            lines[c.lineno] += &line;
+
+                            self.print_lines(&mut stdout, &mut c, &lines, colour)?;
+                        }
+
+                        event::KeyCode::Enter => {
+                            if self.cur(&c, &lines[..])[0].trim().is_empty() {
+                                execute!(
+                                    stdout,
+                                    cursor::MoveToNextLine(1),
+                                    style::SetForegroundColor(colour),
+                                    style::Print(self.leader)
+                                )?;
+                                // Empty line
+                                continue;
+                            }
+
+                            if !c.use_history && lines.len() == 1 {
+                                if lines[0] == self.exit_keyword {
+                                    self.exit();
+                                } else if lines[0] == self.clear_keyword {
+                                    c.charno = 0;
+                                    lines[0].clear();
+
+                                    execute!(
+                                        stdout,
+                                        terminal::Clear(terminal::ClearType::All),
+                                        cursor::MoveTo(0, 0),
+                                        style::SetForegroundColor(colour),
+                                        style::Print(self.leader),
+                                        style::ResetColor,
+                                    )?;
+
+                                    // Command executed, no need to do any other checks
+                                    continue;
+                                }
+                            }
+
+                            if c.use_history && (c.lineno + 1) == self.history.cur().unwrap().len()
+                            {
+                                // On the last line, break out of loop to return code for execution
+                                break;
+                            }
+                            let indent = L::get_indent(&self.cur(&c, &lines)[0..(c.lineno + 1)]);
+
+                            if !c.use_history && (c.lineno + 1) == lines.len() && indent == 0 {
+                                // On the last line, break out of loop to return code for execution
+                                break;
+                            } else {
+                                if c.use_history {
+                                    self.replace_with_history(&mut lines);
+                                    c.use_history = false;
+                                }
+
+                                c.lineno += 1;
+                                c.charno = indent;
+                                lines.insert(c.lineno, " ".repeat(indent));
+                                execute!(stdout, style::Print("\n"))?;
+                                self.print_lines(&mut stdout, &mut c, &lines, colour)?;
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            };
+                Some(Ok(_)) => {} // ignore other events
+                Some(Err(e)) => return Err(e),
+                None => {
+                    return Err(crossterm::ErrorKind::IoError(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "Events ended",
+                    )))
+                }
+            }
 
             queue!(
                 stdout,
