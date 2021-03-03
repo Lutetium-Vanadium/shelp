@@ -34,9 +34,6 @@ use std::path::PathBuf;
 /// - `capacity`
 ///   The maximum amount of commands stored in the history. Default capacity is 64. If there are
 ///   already 64 commands in the history, the oldest one will be forgotten.
-/// - `exit_keyword`
-///   The keyword to exit the repl, it exits the process, so should not be used if any cleanup is a
-///   required before closing repl. See [`set_exit_keyword`](Repl::set_exit_keyword)
 /// - `clear_keyword`
 ///   Clears the screen. See [`set_clear_keyword`](Repl::set_exit_keyword)
 pub struct Repl<L: LangInterface = DefaultLangInterface> {
@@ -59,8 +56,6 @@ pub struct Repl<L: LangInterface = DefaultLangInterface> {
     /// The number of characters in the continued leader, it is stored here since getting number of
     /// characters is an `O(n)` operation for a utf-8 encoded string
     continued_leader_len: usize,
-    /// The keyword which corresponds to the exit command (default is 'exit')
-    exit_keyword: &'static str,
     /// The keyword which corresponds to the clear command (default is 'clear')
     clear_keyword: &'static str,
     _lang_interface: PhantomData<L>,
@@ -93,7 +88,6 @@ impl Repl<DefaultLangInterface> {
             leader_len: leader.chars().count(),
             continued_leader,
             continued_leader_len: leader.chars().count(),
-            exit_keyword: "exit",
             clear_keyword: "clear",
             _lang_interface: PhantomData,
             event_stream: EventStream::new(),
@@ -132,7 +126,6 @@ impl<L: LangInterface> Repl<L> {
             leader_len: leader.chars().count(),
             continued_leader,
             continued_leader_len: leader.chars().count(),
-            exit_keyword: "exit",
             clear_keyword: "clear",
             _lang_interface: PhantomData,
             event_stream: EventStream::new(),
@@ -143,11 +136,6 @@ impl<L: LangInterface> Repl<L> {
         }
 
         repl
-    }
-
-    /// Sets the exit keyword. If you don't want any exit keyword, set it to an empty string
-    pub fn set_exit_keyword(&mut self, exit_keyword: &'static str) {
-        self.exit_keyword = exit_keyword
     }
 
     /// Sets the clear keyword. If you don't want any clear keyword, set it to an empty string
@@ -188,11 +176,6 @@ impl<L: LangInterface> Repl<L> {
         let _ = terminal::disable_raw_mode();
         println!();
         let _ = self.history.write_to_file();
-    }
-
-    fn exit(&self) -> ! {
-        self.pre_exit();
-        std::process::exit(0)
     }
 
     /// Print a command
@@ -271,7 +254,8 @@ impl<L: LangInterface> Repl<L> {
                         event::KeyCode::Char('c')
                             if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
                         {
-                            self.exit()
+                            terminal::disable_raw_mode()?;
+                            return Ok(String::from("exit"));
                         }
                         event::KeyCode::Char('l')
                             if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
@@ -433,9 +417,7 @@ impl<L: LangInterface> Repl<L> {
                             }
 
                             if !c.use_history && lines.len() == 1 {
-                                if lines[0] == self.exit_keyword {
-                                    self.exit();
-                                } else if lines[0] == self.clear_keyword {
+                                if lines[0] == self.clear_keyword {
                                     c.charno = 0;
                                     lines[0].clear();
 
