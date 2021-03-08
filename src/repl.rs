@@ -61,6 +61,9 @@ pub struct Repl<L: LangInterface = DefaultLangInterface> {
     _lang_interface: PhantomData<L>,
     /// The async event stream for the REPL.
     event_stream: EventStream,
+    // Maintain future variables
+    lines: Vec<String>,
+    c: Cursor,
 }
 
 impl Repl<DefaultLangInterface> {
@@ -91,6 +94,8 @@ impl Repl<DefaultLangInterface> {
             clear_keyword: "clear",
             _lang_interface: PhantomData,
             event_stream: EventStream::new(),
+            lines: Vec::new(),
+            c: Cursor::default(),
         };
 
         if should_persist {
@@ -129,6 +134,8 @@ impl<L: LangInterface> Repl<L> {
             clear_keyword: "clear",
             _lang_interface: PhantomData,
             event_stream: EventStream::new(),
+            lines: Vec::new(),
+            c: Cursor::default(),
         };
 
         if should_persist {
@@ -230,24 +237,35 @@ impl<L: LangInterface> Repl<L> {
         )
     }
 
+    /// Resets the cursor and the lines after input has been received
+    fn reset_lines(&mut self) {
+        self.lines = Vec::new();
+        self.c = Cursor::default();
+    }
+
     /// The main function, gives the next command
     pub async fn next(&mut self, colour: style::Color) -> crate::Result<String> {
         let mut stdout = std::io::stdout();
-        let mut lines = Vec::new();
-        lines.push(String::new());
-
-        let mut c = Cursor::default();
+        let mut lines = self.lines.clone();
+        let mut c = self.c.clone();
 
         terminal::enable_raw_mode()?;
 
-        execute!(
-            stdout,
-            style::SetForegroundColor(colour),
-            style::Print(self.leader),
-            style::ResetColor
-        )?;
+        if lines.is_empty() {
+            lines.push(String::new());
+            execute!(
+                stdout,
+                style::SetForegroundColor(colour),
+                style::Print(self.leader),
+                style::ResetColor
+            )?;
+        }
 
         loop {
+            // Update the temporary variables
+            self.lines = lines.clone();
+            self.c = c.clone();
+
             match self.event_stream.next().await {
                 Some(Ok(event::Event::Key(e))) => {
                     match e.code {
@@ -255,6 +273,7 @@ impl<L: LangInterface> Repl<L> {
                             if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
                         {
                             terminal::disable_raw_mode()?;
+                            self.reset_lines();
                             return Ok(String::from("exit"));
                         }
                         event::KeyCode::Char('l')
@@ -413,6 +432,7 @@ impl<L: LangInterface> Repl<L> {
                                     style::Print(self.leader)
                                 )?;
                                 // Empty line
+                                self.reset_lines();
                                 continue;
                             }
 
@@ -462,12 +482,16 @@ impl<L: LangInterface> Repl<L> {
                     }
                 }
                 Some(Ok(_)) => {} // ignore other events
-                Some(Err(e)) => return Err(e),
+                Some(Err(e)) => {
+                    self.reset_lines();
+                    return Err(e);
+                }
                 None => {
+                    self.reset_lines();
                     return Err(crossterm::ErrorKind::IoError(std::io::Error::new(
                         std::io::ErrorKind::BrokenPipe,
                         "Events ended",
-                    )))
+                    )));
                 }
             }
 
@@ -503,6 +527,7 @@ impl<L: LangInterface> Repl<L> {
             self.history.push(lines);
         }
 
+        self.reset_lines();
         Ok(src)
     }
 }
@@ -521,7 +546,7 @@ fn get_byte_i(string: &str, i: usize) -> usize {
         .unwrap_or_else(|| string.len())
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Cursor {
     use_history: bool,
     lineno: usize,
