@@ -44,6 +44,8 @@ pub struct Repl<L: LangInterface = DefaultLangInterface> {
     /// > <some-code>
     /// ^^- leader
     leader: &'static str,
+
+    attached: Option<usize>,
     /// The number of characters in the leader, it is stored here since getting number of characters
     /// is an `O(n)` operation for a utf-8 encoded string
     leader_len: usize,
@@ -88,6 +90,7 @@ impl Repl<DefaultLangInterface> {
         let mut repl = Self {
             history: History::with_capacity(capacity, path),
             leader,
+            attached: None,
             leader_len: leader.chars().count(),
             continued_leader,
             continued_leader_len: leader.chars().count(),
@@ -128,6 +131,7 @@ impl<L: LangInterface> Repl<L> {
         let mut repl = Self {
             history: History::with_capacity(capacity, path),
             leader,
+            attached: None,
             leader_len: leader.chars().count(),
             continued_leader,
             continued_leader_len: leader.chars().count(),
@@ -159,6 +163,16 @@ impl<L: LangInterface> Repl<L> {
         } else {
             lines
         }
+    }
+
+    /// Tell the RELP we have attached to a module
+    pub fn attach(&mut self, id: usize) {
+        self.attached = Some(id)
+    }
+
+    /// Tell the RELP we have detached from all modules.
+    pub fn detach(&mut self) {
+        self.attached = None
     }
 
     /// Easy access to the current line
@@ -205,11 +219,16 @@ impl<L: LangInterface> Repl<L> {
         let mut is_first = true;
 
         for index in 0..lines.len() {
-            let leader = if is_first {
-                is_first = false;
-                self.leader
-            } else {
-                self.continued_leader
+            let leader = match (is_first, self.attached) {
+                (true, Some(id)) => {
+                    is_first = false;
+                    format!("(Attached: {}) {}", id, self.leader)
+                }
+                (true, None) => {
+                    is_first = false;
+                    format!("{}", self.leader)
+                }
+                (false, _) => self.continued_leader.to_string(),
             };
 
             queue!(
@@ -223,7 +242,12 @@ impl<L: LangInterface> Repl<L> {
         }
 
         let leader_len = if c.lineno == 0 {
-            self.leader_len
+            let attached_no = if let Some(id) = self.attached {
+                id.to_string().chars().count() + 13
+            } else {
+                0
+            };
+            attached_no + self.leader_len
         } else {
             self.continued_leader_len
         };
