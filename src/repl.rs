@@ -273,12 +273,12 @@ impl<L: LangInterface> Repl<L> {
         let mut lines = self.lines.clone();
         let mut c = self.c.clone();
 
-        terminal::enable_raw_mode()?;
-
-        let leader = if let Some(id) = self.attached {
-            format!("(Attached: {}) {}", id, self.leader)
+        let leader = if let Some(_id) = self.attached {
+            //format!("(Attached: {}) {}", id, self.leader)
+            ""
         } else {
-            format!("{}", self.leader)
+            terminal::enable_raw_mode()?;
+            self.leader
         };
 
         if lines.is_empty() {
@@ -465,6 +465,15 @@ impl<L: LangInterface> Repl<L> {
                         }
 
                         event::KeyCode::Enter => {
+                            if self.attached.is_some() {
+                                terminal::disable_raw_mode()?;
+                                println!();
+                                // Empty line
+                                self.reset_lines();
+                                execute!(stdout, style::SetForegroundColor(colour))?;
+                                return Ok(String::from("detach"));
+                            }
+
                             if self.cur(&c, &lines[..])[0].trim().is_empty() {
                                 execute!(
                                     stdout,
@@ -549,7 +558,7 @@ impl<L: LangInterface> Repl<L> {
                 } else {
                     0
                 };
-                (leader.as_str(), attached_no + self.leader_len)
+                (leader, attached_no + self.leader_len)
             } else {
                 (self.continued_leader, self.continued_leader_len)
             };
