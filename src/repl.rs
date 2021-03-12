@@ -275,12 +275,19 @@ impl<L: LangInterface> Repl<L> {
 
         terminal::enable_raw_mode()?;
 
+        let leader = if let Some(id) = self.attached {
+            format!("(Attached: {}) {}", id, self.leader)
+        } else {
+            format!("{}", self.leader)
+        };
+
         if lines.is_empty() {
             lines.push(String::new());
+
             execute!(
                 stdout,
                 style::SetForegroundColor(colour),
-                style::Print(self.leader),
+                style::Print(&leader),
                 style::ResetColor
             )?;
         }
@@ -299,6 +306,16 @@ impl<L: LangInterface> Repl<L> {
                             terminal::disable_raw_mode()?;
                             self.reset_lines();
                             return Ok(String::from("exit"));
+                        }
+                        event::KeyCode::Char('d')
+                            if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                        {
+                            terminal::disable_raw_mode()?;
+                            println!();
+                            // Empty line
+                            self.reset_lines();
+                            execute!(stdout, style::SetForegroundColor(colour))?;
+                            return Ok(String::from("detach"));
                         }
                         event::KeyCode::Char('l')
                             if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
@@ -453,7 +470,7 @@ impl<L: LangInterface> Repl<L> {
                                     stdout,
                                     cursor::MoveToNextLine(1),
                                     style::SetForegroundColor(colour),
-                                    style::Print(self.leader)
+                                    style::Print(&leader)
                                 )?;
                                 // Empty line
                                 self.reset_lines();
@@ -470,7 +487,7 @@ impl<L: LangInterface> Repl<L> {
                                         terminal::Clear(terminal::ClearType::All),
                                         cursor::MoveTo(0, 0),
                                         style::SetForegroundColor(colour),
-                                        style::Print(self.leader),
+                                        style::Print(&leader),
                                         style::ResetColor,
                                     )?;
 
@@ -527,7 +544,12 @@ impl<L: LangInterface> Repl<L> {
             )?;
 
             let (leader, leader_len) = if c.lineno == 0 {
-                (self.leader, self.leader_len)
+                let attached_no = if let Some(id) = self.attached {
+                    id.to_string().chars().count() + 13
+                } else {
+                    0
+                };
+                (leader.as_str(), attached_no + self.leader_len)
             } else {
                 (self.continued_leader, self.continued_leader_len)
             };
