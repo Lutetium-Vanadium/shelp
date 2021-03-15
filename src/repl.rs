@@ -49,6 +49,10 @@ pub struct Repl<L: LangInterface = DefaultLangInterface> {
     /// The number of characters in the leader, it is stored here since getting number of characters
     /// is an `O(n)` operation for a utf-8 encoded string
     leader_len: usize,
+    /// The name of the attached module.
+    module: Option<&'static str>,
+    /// The length of the attached module string name.
+    module_len: usize,
     /// If the command is more than one line long, what to print on subsequent lines
     ///
     /// > <some-code>
@@ -92,6 +96,8 @@ impl Repl<DefaultLangInterface> {
             leader,
             attached: None,
             leader_len: leader.chars().count(),
+            module: None,
+            module_len: 0,
             continued_leader,
             continued_leader_len: leader.chars().count(),
             clear_keyword: "clear",
@@ -133,6 +139,8 @@ impl<L: LangInterface> Repl<L> {
             leader,
             attached: None,
             leader_len: leader.chars().count(),
+            module: None,
+            module_len: 0,
             continued_leader,
             continued_leader_len: leader.chars().count(),
             clear_keyword: "clear",
@@ -165,12 +173,24 @@ impl<L: LangInterface> Repl<L> {
         }
     }
 
-    /// Tell the RELP we have attached to a module
+    /// Inform the REPL we have selected a module.
+    pub fn module(&mut self, module: &'static str) {
+        self.module = Some(module);
+        self.module_len = module.len();
+    }
+
+    /// Inform the REPL we have exited from a module's context.
+    pub fn exit_module(&mut self) {
+        self.module = None;
+        self.module_len = 0;
+    }
+
+    /// Tell the REPL we have attached to a module
     pub fn attach(&mut self, id: usize) {
         self.attached = Some(id)
     }
 
-    /// Tell the RELP we have detached from all modules.
+    /// Tell the REPL we have detached from all modules.
     pub fn detach(&mut self) {
         self.attached = None
     }
@@ -226,7 +246,12 @@ impl<L: LangInterface> Repl<L> {
                 }
                 (true, None) => {
                     is_first = false;
-                    format!("{}", self.leader)
+                    if let Some(name) = self.module {
+                        // If there is a module prepend it
+                        format!("{}{}", print_module_name(name), self.leader)
+                    } else {
+                        format!("{}", self.leader)
+                    }
                 }
                 (false, _) => self.continued_leader.to_string(),
             };
@@ -242,12 +267,16 @@ impl<L: LangInterface> Repl<L> {
         }
 
         let leader_len = if c.lineno == 0 {
-            let attached_no = if let Some(id) = self.attached {
+            let extra_len = if let Some(id) = self.attached {
                 id.to_string().chars().count() + 13
             } else {
-                0
+                if self.module.is_some() {
+                    self.module_len + 3 // Add the brackets around the name and space
+                } else {
+                    0
+                }
             };
-            attached_no + self.leader_len
+            extra_len + self.leader_len
         } else {
             self.continued_leader_len
         };
@@ -274,11 +303,14 @@ impl<L: LangInterface> Repl<L> {
         let mut c = self.c.clone();
 
         let leader = if let Some(_id) = self.attached {
-            //format!("(Attached: {}) {}", id, self.leader)
-            ""
+            "".to_string()
         } else {
             terminal::enable_raw_mode()?;
-            self.leader
+            if let Some(name) = self.module {
+                format!("{}{}", print_module_name(name), self.leader)
+            } else {
+                self.leader.to_string()
+            }
         };
 
         if lines.is_empty() {
@@ -316,6 +348,15 @@ impl<L: LangInterface> Repl<L> {
                             self.reset_lines();
                             execute!(stdout, style::SetForegroundColor(colour))?;
                             return Ok(String::from("detach"));
+                        }
+                        event::KeyCode::Esc => {
+                            // Escapes from a module
+                            terminal::disable_raw_mode()?;
+                            println!();
+                            // Empty line
+                            self.reset_lines();
+                            execute!(stdout, style::SetForegroundColor(colour))?;
+                            return Ok(String::from("back"));
                         }
                         event::KeyCode::Char('l')
                             if e.modifiers.contains(event::KeyModifiers::CONTROL) =>
@@ -553,12 +594,16 @@ impl<L: LangInterface> Repl<L> {
             )?;
 
             let (leader, leader_len) = if c.lineno == 0 {
-                let attached_no = if let Some(id) = self.attached {
+                let extra_len = if let Some(id) = self.attached {
                     id.to_string().chars().count() + 13
                 } else {
-                    0
+                    if self.module.is_some() {
+                        self.module_len + 3 // Add the brackets around the name and space
+                    } else {
+                        0
+                    }
                 };
-                (leader, attached_no + self.leader_len)
+                (leader.as_str(), extra_len + self.leader_len)
             } else {
                 (self.continued_leader, self.continued_leader_len)
             };
@@ -599,6 +644,11 @@ fn get_byte_i(string: &str, i: usize) -> usize {
         .nth(i)
         .map(|c| c.0)
         .unwrap_or_else(|| string.len())
+}
+
+/// The format for printing a modules name
+fn print_module_name(name: &'static str) -> String {
+    format!("({}) ", name)
 }
 
 #[derive(Debug, Default, Clone)]
